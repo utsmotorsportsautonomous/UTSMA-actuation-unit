@@ -21,6 +21,8 @@ const int CANID_STEERING_RX = 0x33;
 const int CANID_STEERING_TX = 0x34;
 const int CANID_BRAKING_RX = 0x35;
 const int CANID_BRAKING_TX = 0x36;
+const int CANID_REMOTE_ESTOP = 0x191;
+
 
 // Pin Setup -----------------------------
 int led = 13;
@@ -30,6 +32,9 @@ int stop_button = 15;
 // Steering data -------------------------
 int rawByteData = 0;
 int rawByteData2 = 0;
+
+// Global Estop Check
+bool ESTOP_TRIGGERED;
 
 static CAN_message_t txmsg_error_steering, rxmsg;
 
@@ -51,6 +56,7 @@ void setup() {
     pinMode(Relay, OUTPUT);
     pinMode(led, OUTPUT);
     pinMode(stop_button, INPUT_PULLUP);
+    ESTOP_TRIGGERED = false;
 
 
     //CANBUS Setup
@@ -91,14 +97,23 @@ void loop() {
 //        Serial.println(rxmsg.id,HEX);   
 //        Serial.println(rxmsg.buf[0]);    
         // check if the msg id belongs to steering_rx, check for the rc mode, check for estop press
-
-
-
-        
+        if(rxmsg.id == CANID_REMOTE_ESTOP )                        //---------------// autonomous enable bit is false
+        {
+          Serial.println("Dealing with estop");
+          if(rxmsg.buf[0] == 0){
+            //disable relay
+            digitalWrite(led, LOW);
+            digitalWrite(Relay, LOW);
+            ESTOP_TRIGGERED = true;
+        } else if (rxmsg.buf[0] != 0){
+          ESTOP_TRIGGERED = false;
+        }
+        }
+        else  if (ESTOP_TRIGGERED == false)
+        {
+                
         if(rxmsg.id == CANID_STEERING_RX && rxmsg.buf[0] == 1 && digitalRead(stop_button) == LOW) 
-        {     
-
-               
+        {      
                 digitalWrite(led, HIGH);
                 //enable relay 
                 digitalWrite(Relay, HIGH);
@@ -169,7 +184,12 @@ void loop() {
             digitalWrite(led, LOW);
             digitalWrite(Relay, LOW);
         }
-       }
+        
+        }
+
+   }
+
+       
 
          if(digitalRead(stop_button) == HIGH)                        //---------------// autonomous enable bit is false
         {
