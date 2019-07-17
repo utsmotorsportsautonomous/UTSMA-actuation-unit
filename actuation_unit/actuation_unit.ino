@@ -11,6 +11,7 @@
 
 #include "FlexCAN.h"
 #include "JrkG2.h"
+#include <TimerOne.h>
 
 #define UART_SERIAL Serial1;
 
@@ -28,13 +29,19 @@ const int CANID_REMOTE_ESTOP = 0x191;
 int led = 13;
 const int Relay = 14;
 int stop_button = 15;
+int buzzer = 6;
 
 // Steering data -------------------------
-int rawByteData = 0;
-int rawByteData2 = 0;
+int steeringRawByteData = 0;
 
-// Global Estop Check
-bool ESTOP_TRIGGERED;
+// Braking data -------------------------  
+int brakingRawByteData = 0;
+
+// Flags -------------------------
+bool CAN_AVAILAIBLE = false;
+bool REMOTE_ESTOP_TRIGGERED = false;
+bool AUTONOMOUS_MODE = false;
+
 
 static CAN_message_t txmsg_error_steering, rxmsg;
 
@@ -56,146 +63,167 @@ void setup() {
     pinMode(Relay, OUTPUT);
     pinMode(led, OUTPUT);
     pinMode(stop_button, INPUT_PULLUP);
-    ESTOP_TRIGGERED = false;
+    pinMode(buzzer, OUTPUT);
+   
 
 
-    //CANBUS Setup
+    //CANBUS Setup -------------------------
     //Can Mask
     CAN_filter_t canMask;
     canMask.id = 0xFFFFFF;
     canMask.rtr = 0;
     canMask.ext = 0;
 
-    //Can Filter
+    //Can Filter -------------------------
     CAN_filter_t canFilter;
 
-    //Begin CANBUS
+    //Begin CANBUS -------------------------
     CANbus.begin();
 
-//    canFilter.id = CANID_STEERING_RX;
-//    CANbus.setFilter(canFilter, 0);
-//    CANbus.setFilter(canFilter, 1);
-//    CANbus.setFilter(canFilter, 2);
-//    CANbus.setFilter(canFilter, 3);
-//    CANbus.setFilter(canFilter, 4);
-//    CANbus.setFilter(canFilter, 5);
-//    CANbus.setFilter(canFilter, 6);
-//    CANbus.setFilter(canFilter, 7);
-
-//    txmsg_error_steering.id = CANID_STEERING_TX;
-
-
-    
-
-    
-
+     Timer1.initialize(10); 
+     //Timer1.attachInterrupt(alarm_detect);
+     Timer1.attachInterrupt(can_update);
 }
 
-void loop() {
-    
+//Alarms  -------------------------
+void autonomousModeAlarm(){    
+    digitalWrite(buzzer, HIGH);
+    delay(100);
+    digitalWrite(buzzer, LOW);
+    delay(1000);  
+}
+
+void estopTriggeredAlarm(){
+    digitalWrite(buzzer, HIGH);
+}
+void estopReset(){
+  digitalWrite(buzzer, LOW);
+}
+
+
+//Interrrupt alarms  -------------------------
+void alarm_detect(){
+  if(AUTONOMOUS_MODE==true){
+    autonomousModeAlarm();
+  }
+  else if(REMOTE_ESTOP_TRIGGERED==true){
+    estopTriggeredAlarm();
+  }
+  else{
+    estopReset();    
+  }
+}
+
+//Interrrupt can  -------------------------
+void can_update(){
+      
     if(CANbus.read(rxmsg)) {
-//        Serial.println(rxmsg.id,HEX);   
-//        Serial.println(rxmsg.buf[0]);    
-        // check if the msg id belongs to steering_rx, check for the rc mode, check for estop press
-        if(rxmsg.id == CANID_REMOTE_ESTOP )                        //---------------// autonomous enable bit is false
-        {
-          Serial.println("Dealing with estop");
-          if(rxmsg.buf[0] == 0){
-            //disable relay
-            digitalWrite(led, LOW);
-            digitalWrite(Relay, LOW);
-            ESTOP_TRIGGERED = true;
-        } else if (rxmsg.buf[0] != 0){
-          ESTOP_TRIGGERED = false;
-        }
-        }
-        else  if (ESTOP_TRIGGERED == false)
-        {
-                
-        if(rxmsg.id == CANID_STEERING_RX && rxmsg.buf[0] == 1 && digitalRead(stop_button) == LOW) 
-        {      
-                digitalWrite(led, HIGH);
-                //enable relay 
-                digitalWrite(Relay, HIGH);
-                
-                //get data from canbus
-                rawByteData = rxmsg.buf[1];
-                rawByteData -= 128;
+      CAN_AVAILAIBLE = true;
+      
+      if(rxmsg.id == CANID_REMOTE_ESTOP ){
 
-                //send data to motor controller using UART
-                if(rawByteData > -2 && rawByteData < 2)      // straight
-                {
-                    Serial2.write(170);
-                    Serial2.write(224);
-                    Serial2.write(1);
-                }
-                else if(rawByteData <= -2)                     // left
-                {
-                    // turning anticlockwise (set target low resolution reverse)
-                    Serial2.write(170);
-                    Serial2.write(224);
-                    Serial2.write(abs(rawByteData));
-                }
-                else if(rawByteData >= 2)                     // right
-                {
-                    // turning clockwise    (set target low resolution forward)
-                    Serial2.write(170);
-                    Serial2.write(225);
-                    Serial2.write(abs(rawByteData));
-                }
-            }
-        if(rxmsg.id == CANID_BRAKING_RX && rxmsg.buf[0] == 1 && digitalRead(stop_button) == LOW) 
-        {   
-          Serial1.write(rawByteData2 );      
-                digitalWrite(led, HIGH);
-                //enable relay 
-                digitalWrite(Relay, HIGH);
-                
-                //get data from canbus
-                rawByteData2 = rxmsg.buf[1];
-                rawByteData2 -= 128;
-
-                //send data to motor controller using UART
-                if(rawByteData2 > -2 && rawByteData2 < 2)      // straight
-                {
-                    Serial1.write(170);
-                    Serial1.write(224);
-                    Serial1.write(1);
-                }
-                else if(rawByteData2 <= -2)                     // left
-                {
-                    // turning anticlockwise (set target low resolution reverse)
-                    Serial1.write(170);
-                    Serial1.write(224);
-                    Serial1.write(abs(rawByteData2));
-                }
-                else if(rawByteData2 >= 2)                     // right
-                {
-                    // turning clockwise    (set target low resolution forward)
-                    Serial1.write(170);
-                    Serial1.write(225);
-                    Serial1.write(abs(rawByteData2));
-                }
-            }
-           
-        if(digitalRead(stop_button) == HIGH || (rxmsg.buf[0] != 1 && rxmsg.id == CANID_STEERING_RX))                        //---------------// autonomous enable bit is false
-        {
-            //disable relay
-            digitalWrite(led, LOW);
-            digitalWrite(Relay, LOW);
-        }
+//        Serial.print(rxmsg.buf[0]);
         
+       if(rxmsg.buf[0] == 0){
+          REMOTE_ESTOP_TRIGGERED = true;
         }
-
-   }
-
-       
-
-         if(digitalRead(stop_button) == HIGH)                        //---------------// autonomous enable bit is false
-        {
-            //disable relay
-            digitalWrite(led, LOW);
-            digitalWrite(Relay, LOW);
-        }
+       else{ 
+         REMOTE_ESTOP_TRIGGERED = false;
+       }
         
-    }
+      }
+      if(rxmsg.id == CANID_STEERING_RX){
+         steeringRawByteData = rxmsg.buf[1];
+         steeringRawByteData -= 128;
+
+      }
+      if(rxmsg.id == CANID_BRAKING_RX && rxmsg.buf[0] == 1){
+        brakingRawByteData = rxmsg.buf[1];
+        brakingRawByteData -= 128;
+
+      }      
+  }
+  else {
+    
+    CAN_AVAILAIBLE = false;
+  
+  }
+}
+
+
+void loop() {
+
+//can_update();
+
+  Serial.print("steeringRawByteData");
+  Serial.print(" ");
+  Serial.println(steeringRawByteData);
+//  Serial.print("brakingRawByteData");
+//  Serial.print(" ");
+//  Serial.println(brakingRawByteData);
+//  Serial.print("ESTOP_TRIGGERED");
+//  Serial.print(" ");
+//  Serial.println(REMOTE_ESTOP_TRIGGERED);
+
+
+  if(REMOTE_ESTOP_TRIGGERED==false && CAN_AVAILAIBLE==true){// straight
+       digitalWrite(led, HIGH);//enable LED       
+       digitalWrite(Relay, HIGH);//enable relay 
+       if(steeringRawByteData > -2 && steeringRawByteData < 2){
+            Serial2.write(170);
+            Serial2.write(224);
+            Serial2.write(1);
+       }
+       else if(steeringRawByteData <= -2){// left
+
+            // turning anticlockwise (set target low resolution reverse)
+            Serial2.write(170);
+            Serial2.write(224);
+            Serial2.write(abs(steeringRawByteData));
+        }
+        else if(steeringRawByteData >= 2){// right        
+            // turning clockwise    (set target low resolution forward)
+            Serial2.write(170);
+            Serial2.write(225);
+            Serial2.write(abs(steeringRawByteData));
+        }
+
+        if(brakingRawByteData > -2 && brakingRawByteData < 2){
+            Serial1.write(170);
+            Serial1.write(224);
+            Serial1.write(1);
+         }
+         
+        else if(brakingRawByteData <= -2){
+            // turning anticlockwise (set target low resolution reverse)
+            Serial1.write(170);
+            Serial1.write(224);
+            Serial1.write(abs(brakingRawByteData));
+        }
+        else if(brakingRawByteData >= 2){
+            // turning clockwise    (set target low resolution forward)
+            Serial1.write(170);
+            Serial1.write(225);
+            Serial1.write(abs(brakingRawByteData));
+        }
+  }
+  else if(REMOTE_ESTOP_TRIGGERED==true){
+
+    
+    Serial2.write(170);
+    Serial2.write(224);
+    Serial2.write(1);
+    
+    delay(500);
+    
+    digitalWrite(led, LOW);//disable LED       
+    digitalWrite(Relay, LOW);//disable relay 
+
+
+
+    
+    
+  }
+
+  }
+    
