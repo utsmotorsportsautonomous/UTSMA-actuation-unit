@@ -12,6 +12,8 @@
 #include "FlexCAN.h"
 #include "JrkG2.h"
 #include <TimerOne.h>
+#include <TimerThree.h>
+
 
 #define UART_SERIAL Serial1;
 
@@ -81,8 +83,9 @@ void setup() {
     CANbus.begin();
 
      Timer1.initialize(10); 
-     //Timer1.attachInterrupt(alarm_detect);
-     Timer1.attachInterrupt(can_update);
+     Timer3.initialize(10); 
+     Timer3.attachInterrupt(alarm_detect);
+     //Timer1.attachInterrupt(can_update);
 }
 
 //Alarms  -------------------------
@@ -97,12 +100,14 @@ void estopTriggeredAlarm(){
     digitalWrite(buzzer, HIGH);
 }
 void estopReset(){
-  digitalWrite(buzzer, LOW);
+    digitalWrite(buzzer, LOW);
 }
 
 
-//Interrrupt alarms  -------------------------
+////Interrrupt alarms  -------------------------
 void alarm_detect(){
+
+//  autonomousModeAlarm();
   if(AUTONOMOUS_MODE==true){
     autonomousModeAlarm();
   }
@@ -118,34 +123,47 @@ void alarm_detect(){
 void can_update(){
       
     if(CANbus.read(rxmsg)) {
-      CAN_AVAILAIBLE = true;
+        CAN_AVAILAIBLE = true;
       
-      if(rxmsg.id == CANID_REMOTE_ESTOP ){
-
-//        Serial.print(rxmsg.buf[0]);
+        if(rxmsg.id == CANID_REMOTE_ESTOP ){
         
-       if(rxmsg.buf[0] == 0){
+if(rxmsg.buf[0] == 0){
           REMOTE_ESTOP_TRIGGERED = true;
+          //estopTriggeredAlarm();          
         }
        else{ 
          REMOTE_ESTOP_TRIGGERED = false;
+         //estopReset(); 
        }
         
       }
-      if(rxmsg.id == CANID_STEERING_RX){
+      if(rxmsg.id == CANID_STEERING_RX  && rxmsg.buf[0] == 1){
+      AUTONOMOUS_MODE==true;
          steeringRawByteData = rxmsg.buf[1];
-         steeringRawByteData -= 128;
+         //steeringRawByteData -= 128;
+
+         //to prevent the value from hitting 0
+         steeringRawByteData -= 127;
 
       }
       if(rxmsg.id == CANID_BRAKING_RX && rxmsg.buf[0] == 1){
+        AUTONOMOUS_MODE==true;
         brakingRawByteData = rxmsg.buf[1];
-        brakingRawByteData -= 128;
+        //brakingRawByteData -= 128;
+
+        // we minus 160 to make the starting position of the servo
+        // to be slightly backwards
+        brakingRawByteData -= 150;
+        if( brakingRawByteData < -126){
+            brakingRawByteData = -126;
+        }
 
       }      
   }
   else {
     
     CAN_AVAILAIBLE = false;
+    //estopReset();   
   
   }
 }
@@ -153,8 +171,11 @@ void can_update(){
 
 void loop() {
 
-//can_update();
+  
 
+  can_update();
+  //estopTriggeredAlarm();  
+  //autonomousModeAlarm();
   Serial.print("steeringRawByteData");
   Serial.print(" ");
   Serial.println(steeringRawByteData);
@@ -179,7 +200,13 @@ void loop() {
             // turning anticlockwise (set target low resolution reverse)
             Serial2.write(170);
             Serial2.write(224);
+
+            if(steeringRawByteData==0){
+              steeringRawByteData=1;
+            }
             Serial2.write(abs(steeringRawByteData));
+
+           
         }
         else if(steeringRawByteData >= 2){// right        
             // turning clockwise    (set target low resolution forward)
@@ -200,21 +227,26 @@ void loop() {
             Serial1.write(224);
             Serial1.write(abs(brakingRawByteData));
         }
-        else if(brakingRawByteData >= 2){
-            // turning clockwise    (set target low resolution forward)
-            Serial1.write(170);
-            Serial1.write(225);
-            Serial1.write(abs(brakingRawByteData));
-        }
+//        else if(brakingRawByteData >= 2){//disabled purposefully to prevent braking turning inwards
+//            // turning clockwise    (set target low resolution forward)
+//            Serial1.write(170);
+//            Serial1.write(225);
+//            Serial1.write(abs(brakingRawByteData));
+//        }
   }
   else if(REMOTE_ESTOP_TRIGGERED==true){
 
-    
+    //straignten wheels
     Serial2.write(170);
     Serial2.write(224);
     Serial2.write(1);
+
+    //apply brakes
+    Serial1.write(170);
+    Serial1.write(224);
+    Serial1.write(50);
     
-    delay(500);
+    delay(100);
     
     digitalWrite(led, LOW);//disable LED       
     digitalWrite(Relay, LOW);//disable relay 
